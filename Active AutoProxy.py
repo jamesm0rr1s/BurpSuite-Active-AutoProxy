@@ -18,6 +18,7 @@ from java.awt.event import KeyEvent # for allowing tab key to change focus inste
 from java.beans import PropertyChangeEvent # for keeping split panes the same height in AutoTest
 from java.beans import PropertyChangeListener # for keeping split panes the same height in AutoTest
 from java.lang import Runnable # for inserting/deleting to/from the log table
+from java.net import URL # for downloading block lists
 from java.util import ArrayList # for log table in AutoProxy
 from javax.swing import BorderFactory # for creating borders around the AutoConfig and AutoBlock panels
 from javax.swing import JButton # for buttons in AutoProxy and AutoTest
@@ -43,11 +44,14 @@ from javax.swing.table import DefaultTableModel # for host table in AutoProxy
 from javax.swing.table import TableCellRenderer # for aligning column headers in AutoProxy host table
 from javax.swing.table import TableRowSorter # for sorting and filtering the log table
 from javax.swing.text import DefaultHighlighter # for highlighting regex errors in AutoProxy and AutoTest
+from thread import start_new_thread # for downloading block lists
 from threading import Lock # for logging in AutoProxy
 import base64 # for requests when saving/restoring state and exporting/importing log table
 import csv # for exporting/importing log table to/from csv
+import httplib # for testing connections when downloading AutoBlock files
 import json # for saving/restoring state
 import os # for splitting the file name and file extension in AutoConfig and AutoBlock and for checking file vs directory in AutoBlock
+import Queue # to get return value from new thread
 import re # for regex support in AutoProxy and AutoTest
 import urllib # for downloading AutoBlock files containing hosts to block
 
@@ -2686,8 +2690,18 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 		# create frame
 		frameAutoConfigDialogBox = JFrame()
 
+		# try to load the last used directory
+		try:
+			# load the directory for future imports/exports
+			fileChooserDirectory = self._callbacks.loadExtensionSetting("fileChooserDirectory")
+
+		# there is not a last used directory
+		except:
+			# set the last used directory to blank
+			fileChooserDirectory = ""
+
 		# create file chooser
-		fileChooserAutoConfigDialogBox = JFileChooser()
+		fileChooserAutoConfigDialogBox = JFileChooser(fileChooserDirectory)
 
 		# set dialog title
 		fileChooserAutoConfigDialogBox.setDialogTitle(dialogTitle)
@@ -2706,6 +2720,12 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 		
 			# return no path/file selected
 			return False, "No Path/File"
+
+		# get the directory
+		fileChooserDirectory = fileChooserAutoConfigDialogBox.getCurrentDirectory()#zzzzz
+
+		# store the directory for future imports/exports
+		self._callbacks.saveExtensionSetting("fileChooserDirectory", str(fileChooserDirectory))#zzzzz
 
 		# get absolute path of file
 		fileChosenAutoConfigDialogBox = fileChooserAutoConfigDialogBox.getSelectedFile().getAbsolutePath()
@@ -3591,8 +3611,18 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 		# create frame
 		frameAutoBlockDialogBox = JFrame()
 
+		# try to load the last used directory
+		try:
+			# load the directory for future imports/exports
+			fileChooserDirectory = self._callbacks.loadExtensionSetting("fileChooserDirectory")
+
+		# there is not a last used directory
+		except:
+			# set the last used directory to blank
+			fileChooserDirectory = ""
+
 		# create file chooser
-		fileChooserAutoBlockDialogBox = JFileChooser()
+		fileChooserAutoBlockDialogBox = JFileChooser(fileChooserDirectory)
 
 		# only show directories
 		fileChooserAutoBlockDialogBox.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY)
@@ -3611,6 +3641,12 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 	
 			# return no path selected
 			return False, "No Path Selected"
+
+		# get the directory
+		fileChooserDirectory = fileChooserAutoBlockDialogBox.getCurrentDirectory()#zzzzz
+
+		# store the directory for future imports/exports
+		self._callbacks.saveExtensionSetting("fileChooserDirectory", str(fileChooserDirectory))#zzzzz
 
 		# get absolute path of file
 		fileChosenAutoBlockDialogBox = fileChooserAutoBlockDialogBox.getSelectedFile().getAbsolutePath()
@@ -3631,10 +3667,96 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 
 
 	#
-	# downloads a block list for AutoBlock
+	# download the block list through Burp in case there is an upstream proxy
 	#
 
-	def downloadBlockList(self, urlIndex, fileDirectory):
+	def downloadBlockListThroughBurp(self, urlIndex, fileDirectory):
+
+		# convert url index to string
+		urlIndexString = str(urlIndex)
+
+		# set a file name to download to
+		fileName = self._dictionaryOfBlockObjects["fileNameText" + urlIndexString]
+
+		# set the path and filename
+		fileAutoBlock = os.path.join(fileDirectory, fileName)
+
+		# get the url to download the block list from
+		urlToDownloadFrom = self._dictionaryOfBlockObjects["labelUrlText" + urlIndexString]
+
+		# create the url
+		downloadCreatedUrl = URL(urlToDownloadFrom)
+
+		# set the host
+		downloadHost = downloadCreatedUrl.getHost()
+
+		# try to connect to the url
+		try:
+			# make the test connection
+			testConnection = httplib.HTTPConnection(downloadHost)
+			testConnection.request("HEAD", "")
+			testConnectionResponse = testConnection.getresponse()
+
+			# can connect to the url
+			canConnectToUrl = True
+
+		# cannot connect to the url
+		except:
+			canConnectToUrl = False
+
+		# check that there is a valid connection
+		if(canConnectToUrl):
+
+			# create the request
+			downloadRequest = self._helpers.buildHttpRequest(downloadCreatedUrl)
+
+			# check if url protocol is https
+			if urlToDownloadFrom.startswith("https"):
+				useHttps = True
+				port = 443
+				protocol = "https"
+
+			# url protocol is http
+			else:
+				useHttps = False
+				port = 80
+				protocol = "http"
+
+			# try to download file
+			try:
+				# build the http service
+				httpService = self._helpers.buildHttpService(downloadHost, port, protocol)
+
+				# make the http request
+				downloadResponse = self._callbacks.makeHttpRequest(httpService, downloadRequest)
+
+				# get the response
+				response = downloadResponse.getResponse().tostring()
+
+				# save the response to a text file
+				downloadFile = open(fileAutoBlock, "w")
+				downloadFile.write(response)
+				downloadFile.close()
+
+				# set that the new thread is complete
+				self._dictionaryOfThreadResultQueues[urlIndex].put(True)
+
+			# download failed
+			except:
+				# set download failed
+				self._dictionaryOfThreadResultQueues[urlIndex].put(False)
+
+		# test connection failed
+		else:
+			# set download failed
+			self._dictionaryOfThreadResultQueues[urlIndex].put(False)
+
+
+	#
+	# downloads a block list for AutoBlock not going through Burp
+	#
+
+	def downloadBlockListNotThroughBurp(self, urlIndex, fileDirectory):
 
 		# convert url index to string
 		urlIndexString = str(urlIndex)
@@ -3702,6 +3824,9 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 		if fileChosen == False:
 			return
 
+		# create a dictionary of queues to get values from new threads
+		self._dictionaryOfThreadResultQueues = dict()
+
 		# check if download all button was clicked
 		if buttonIndex == 1:
 
@@ -3711,11 +3836,20 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 			# download block lists for rows 2-8
 			for i in range(2, 9):
 
+				# create queue to get value from new thread
+				self._dictionaryOfThreadResultQueues[i] = Queue.Queue()
+
 				# download all the block lists
-				autoBlockDownloadStatusArray[i] = self.downloadBlockList(i, fileAutoBlockDirectory)
+				# autoBlockDownloadStatusArray[i] = self.downloadBlockListNotThroughBurp(i, fileAutoBlockDirectory)
+
+				# download a single block list through Burp in case there is an upstream proxy
+				start_new_thread(self.downloadBlockListThroughBurp, (i, fileAutoBlockDirectory))
 
 			# click enable/disable buttons 2-8
 			for i in range(2, 9):
+
+				# set the download status
+				autoBlockDownloadStatusArray[i] = self._dictionaryOfThreadResultQueues[i].get()
 
 				# check if the file was downloaded before trying to import
 				if autoBlockDownloadStatusArray[i] == True:
@@ -3735,13 +3869,30 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 						self._dictionaryOfBlockObjects["buttonEnableDisable" + str(i)].doClick()
 						self._dictionaryOfBlockObjects["buttonEnableDisable" + str(i)].doClick()
 
+				# download failed
+				else:
+					# get the url to download the block list from
+					urlToDownloadFrom = self._dictionaryOfBlockObjects["labelUrlText" + str(i)]
+
+					# display message box
+					dialogOption = JOptionPane.showMessageDialog(None, "Download failed for AutoBlock file: " + urlToDownloadFrom + ".\nTry downloading the file manually.", "Download Failed", JOptionPane.INFORMATION_MESSAGE)
+
 		# single download button was clicked
 		else:
 			# create an array for the download status
 			autoBlockDownloadStatusArray = [False]
 
-			# download a single block list
-			autoBlockDownloadStatusArray[0] = self.downloadBlockList(buttonIndex, fileAutoBlockDirectory)
+			# create queue to get value from new thread
+			self._dictionaryOfThreadResultQueues[buttonIndex] = Queue.Queue()
+
+			# download a single block list not through Burp
+			# autoBlockDownloadStatusArray[0] = self.downloadBlockListNotThroughBurp(buttonIndex, fileAutoBlockDirectory)
+
+			# download a single block list through Burp in case there is an upstream proxy
+			start_new_thread(self.downloadBlockListThroughBurp, (buttonIndex, fileAutoBlockDirectory))
+
+			# set the download status
+			autoBlockDownloadStatusArray[0] = self._dictionaryOfThreadResultQueues[buttonIndex].get()
 
 			# check if the file was downloaded before trying to import
 			if autoBlockDownloadStatusArray[0] == True:
@@ -3760,6 +3911,14 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 					# click the button twice
 					self._dictionaryOfBlockObjects["buttonEnableDisable" + str(buttonIndex)].doClick()
 					self._dictionaryOfBlockObjects["buttonEnableDisable" + str(buttonIndex)].doClick()
+
+			# download failed
+			else:
+				# get the url to download the block list from
+				urlToDownloadFrom = self._dictionaryOfBlockObjects["labelUrlText" + str(buttonIndex)]
+
+				# display message box
+				dialogOption = JOptionPane.showMessageDialog(None, "Download failed for AutoBlock file: " + urlToDownloadFrom + ".\nTry downloading the file manually.", "Download Failed", JOptionPane.INFORMATION_MESSAGE)
 
 
 	#
@@ -3797,7 +3956,7 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 					# https://s3.amazonaws.com/lists.disconnect.me/simple_ad.txt
 					# comments starting with # followed by one blank row with a new line character
 					# host
-					if rowBlockFile.startswith("#") == False and len(rowBlockFile) > 1:
+					if rowBlockFile.startswith("#") == False and len(rowBlockFile) > 1 and " " not in rowBlockFile:
 
 						# add to block list
 						self._dictionaryOfAutoBlockLists["autoBlockList" + str(buttonIndex)].append(rowBlockFile.rstrip("\r\n"))
@@ -3811,7 +3970,7 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 					# https://s3.amazonaws.com/lists.disconnect.me/simple_tracking.txt
 					# comments starting with # followed by one blank row with a new line character
 					# host
-					if rowBlockFile.startswith("#") == False and len(rowBlockFile) > 1:
+					if rowBlockFile.startswith("#") == False and len(rowBlockFile) > 1 and " " not in rowBlockFile:
 
 						# add to block list
 						self._dictionaryOfAutoBlockLists["autoBlockList" + str(buttonIndex)].append(rowBlockFile.rstrip("\r\n"))
@@ -3822,7 +3981,7 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 				# loop through each row
 				for rowBlockFile in blockFile:
 
-					# https://hosts-file.net/ad_servers.txt
+					# https://hosts-file.net/download/hosts.txt
 					# 127.0.0.1 tab host
 					# 127.0.0.1	host
 					if rowBlockFile.startswith("127.0.0.1\t"):
@@ -3838,8 +3997,10 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 
 					# https://mirror1.malwaredomains.com/files/justdomains
 					# host
-					# add to block list
-					self._dictionaryOfAutoBlockLists["autoBlockList" + str(buttonIndex)].append(rowBlockFile.rstrip("\r\n"))
+					if len(rowBlockFile) > 1 and " " not in rowBlockFile:
+
+						# add to block list
+						self._dictionaryOfAutoBlockLists["autoBlockList" + str(buttonIndex)].append(rowBlockFile.rstrip("\r\n"))
 
 			# check for button index to only import block hosts in the propper format
 			elif buttonIndex == 7:
@@ -3863,7 +4024,7 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 					# https://zeustracker.abuse.ch/blocklist.php?download=domainblocklist
 					# comments starting with # followed by one blank row with a new line character
 					# host
-					if rowBlockFile.startswith("#") == False and len(rowBlockFile) > 1:
+					if rowBlockFile.startswith("#") == False and len(rowBlockFile) > 1 and " " not in rowBlockFile:
 
 						# add to block list
 						self._dictionaryOfAutoBlockLists["autoBlockList" + str(buttonIndex)].append(rowBlockFile.rstrip("\r\n"))
