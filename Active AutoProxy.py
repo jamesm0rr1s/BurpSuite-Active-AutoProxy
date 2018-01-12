@@ -53,7 +53,6 @@ import json # for saving/restoring state
 import os # for splitting the file name and file extension in AutoConfig and AutoBlock and for checking file vs directory in AutoBlock
 import Queue # to get return value from new thread
 import re # for regex support in AutoProxy and AutoTest
-import urllib # for downloading AutoBlock files containing hosts to block
 
 
 #
@@ -3753,53 +3752,6 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 
 
 	#
-	# downloads a block list for AutoBlock not going through Burp
-	#
-
-	def downloadBlockListNotThroughBurp(self, urlIndex, fileDirectory):
-
-		# convert url index to string
-		urlIndexString = str(urlIndex)
-
-		# set a file name to download to
-		fileName = self._dictionaryOfBlockObjects["fileNameText" + urlIndexString]
-
-		# set the path and filename
-		fileAutoBlock = os.path.join(fileDirectory, fileName)
-
-		# get the url to download the block list from
-		urlToDownloadFrom = self._dictionaryOfBlockObjects["labelUrlText" + urlIndexString]
-
-		# try up to 10 times to download the file
-		for j in range(0, 10):
-
-			# try to download block hosts file
-			try:
-				# download the file of hosts to block
-				response = urllib.urlretrieve(urlToDownloadFrom, fileAutoBlock)
-
-				# break out of retry loop
-				break
-
-			# catch errors when downloading
-			except:
-				# check if last try
-				if j == 9:
-
-					# display message box
-					dialogOption = JOptionPane.showMessageDialog(None, "Download failed for AutoBlock file: " + urlToDownloadFrom + ".\nTry downloading the file manually.", "Download Failed", JOptionPane.INFORMATION_MESSAGE)
-
-					# download was unsuccessful
-					return False
-
-				# try again
-				continue
-
-		# download was successful
-		return True
-
-
-	#
 	# implement AutoBlock download block list button clicks
 	#
 
@@ -3839,10 +3791,7 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 				# create queue to get value from new thread
 				self._dictionaryOfThreadResultQueues[i] = Queue.Queue()
 
-				# download all the block lists
-				# autoBlockDownloadStatusArray[i] = self.downloadBlockListNotThroughBurp(i, fileAutoBlockDirectory)
-
-				# download a single block list through Burp in case there is an upstream proxy
+				# download all block lists through Burp in case there is an upstream proxy
 				start_new_thread(self.downloadBlockListThroughBurp, (i, fileAutoBlockDirectory))
 
 			# click enable/disable buttons 2-8
@@ -3884,9 +3833,6 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 
 			# create queue to get value from new thread
 			self._dictionaryOfThreadResultQueues[buttonIndex] = Queue.Queue()
-
-			# download a single block list not through Burp
-			# autoBlockDownloadStatusArray[0] = self.downloadBlockListNotThroughBurp(buttonIndex, fileAutoBlockDirectory)
 
 			# download a single block list through Burp in case there is an upstream proxy
 			start_new_thread(self.downloadBlockListThroughBurp, (buttonIndex, fileAutoBlockDirectory))
