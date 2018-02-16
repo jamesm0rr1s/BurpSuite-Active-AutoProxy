@@ -1,6 +1,7 @@
-# Active AutoProxy
+# Active AutoProxy (Proxy Action Rules)
 
 This extension can automatically forward, intercept, and drop proxy requests while actively displaying proxy log information and centralizing list management. This extension can also block ads, tracking sites, malware sites, etc. The state of the extension including the settings, filters, and data can easily be exported and imported.
+This extension was renamed from Active AutoProxy to Proxy Action Rules by PortSwigger for their BApp Store.
 
 
 ## Requirements:
