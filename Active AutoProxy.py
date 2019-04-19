@@ -1728,7 +1728,7 @@ class BurpExtender(IBurpExtender, ITab, IProxyListener, IMessageEditorController
 		# print text to output window
 		print(self._EXTENSION_NAME + " v" + self._EXTENSION_VERSION)
 		print("Created by James Morris")
-		print("https://github.com/JamesMorris-BurpSuite/")
+		print("https://github.com/jamesm0rr1s")
 
 		# end of BurpExtender
 		return
